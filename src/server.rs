@@ -60,8 +60,11 @@ impl NewsServer {
             input.query.replace(' ', "+"), limit
         );
         match self.client.get(&url).send().await.and_then(|r| Ok(r)) {
-            Ok(resp) => match resp.json::<Value>().await {
-                Ok(data) => format_articles(&data),
+            Ok(resp) => match resp.text().await {
+                Ok(text) => match serde_json::from_str::<Value>(&text) {
+                    Ok(data) => format_articles(&data),
+                    Err(e) => format!("Error parsing: {e}"),
+                },
                 Err(e) => format!("Error: {e}"),
             },
             Err(e) => format!("Error: {e}"),
@@ -82,8 +85,11 @@ impl NewsServer {
             query.replace(' ', "+"), limit
         );
         match self.client.get(&url).send().await {
-            Ok(resp) => match resp.json::<Value>().await {
-                Ok(data) => format_articles(&data),
+            Ok(resp) => match resp.text().await {
+                Ok(text) => match serde_json::from_str::<Value>(&text) {
+                    Ok(data) => format_articles(&data),
+                    Err(e) => format!("Error parsing: {e}"),
+                },
                 Err(e) => format!("Error: {e}"),
             },
             Err(e) => format!("Error: {e}"),
@@ -97,34 +103,17 @@ impl NewsServer {
             "https://api.gdeltproject.org/api/v2/doc/doc?query={}&mode=tonechart&format=json",
             query.replace(' ', "+")
         );
-        match self.client.get(&url).send().await {
-            Ok(resp) => match resp.json::<Value>().await {
-                Ok(data) => serde_json::to_string_pretty(&data).unwrap_or_default(),
-                Err(e) => format!("Error: {e}"),
-            },
-            Err(e) => format!("Error: {e}"),
-        }
+        fetch_gdelt_raw(&self.client, &url).await
     }
 
     #[tool(description = "Get news volume timeline for a topic (how much coverage over time)")]
     async fn get_news_timeline(&self, Parameters(input): Parameters<TimelineInput>) -> String {
         let res = input.resolution.as_deref().unwrap_or("day");
-        let mode = match res {
-            "week" => "timelinevol",
-            "month" => "timelinevol",
-            _ => "timelinevol",
-        };
         let url = format!(
-            "https://api.gdeltproject.org/api/v2/doc/doc?query={}&mode={}&format=json&TIMERES={}",
-            input.query.replace(' ', "+"), mode, res
+            "https://api.gdeltproject.org/api/v2/doc/doc?query={}&mode=timelinevol&format=json&TIMERES={}",
+            input.query.replace(' ', "+"), res
         );
-        match self.client.get(&url).send().await {
-            Ok(resp) => match resp.json::<Value>().await {
-                Ok(data) => serde_json::to_string_pretty(&data).unwrap_or_default(),
-                Err(e) => format!("Error: {e}"),
-            },
-            Err(e) => format!("Error: {e}"),
-        }
+        fetch_gdelt_raw(&self.client, &url).await
     }
 
     #[tool(description = "Get tone/sentiment analysis for news about a topic (via GDELT)")]
@@ -133,13 +122,7 @@ impl NewsServer {
             "https://api.gdeltproject.org/api/v2/doc/doc?query={}&mode=tonechart&format=json",
             input.query.replace(' ', "+")
         );
-        match self.client.get(&url).send().await {
-            Ok(resp) => match resp.json::<Value>().await {
-                Ok(data) => serde_json::to_string_pretty(&data).unwrap_or_default(),
-                Err(e) => format!("Error: {e}"),
-            },
-            Err(e) => format!("Error: {e}"),
-        }
+        fetch_gdelt_raw(&self.client, &url).await
     }
 
     #[tool(description = "Search news via NewsAPI (requires NEWSAPI_KEY, broader sources)")]
@@ -153,19 +136,22 @@ impl NewsServer {
                     input.query.replace(' ', "+"), limit, sort, key
                 );
                 match self.client.get(&url).send().await {
-                    Ok(resp) => match resp.json::<Value>().await {
-                        Ok(data) => {
-                            let articles = data["articles"].as_array().unwrap_or(&vec![]).iter().map(|a| {
-                                serde_json::json!({
-                                    "title": a["title"],
-                                    "source": a["source"]["name"],
-                                    "url": a["url"],
-                                    "published_at": a["publishedAt"],
-                                    "description": a["description"]
-                                })
-                            }).collect::<Vec<_>>();
-                            serde_json::to_string_pretty(&articles).unwrap_or_default()
-                        }
+                    Ok(resp) => match resp.text().await {
+                        Ok(text) => match serde_json::from_str::<Value>(&text) {
+                            Ok(data) => {
+                                let articles = data["articles"].as_array().unwrap_or(&vec![]).iter().map(|a| {
+                                    serde_json::json!({
+                                        "title": a["title"],
+                                        "source": a["source"]["name"],
+                                        "url": a["url"],
+                                        "published_at": a["publishedAt"],
+                                        "description": a["description"]
+                                    })
+                                }).collect::<Vec<_>>();
+                                serde_json::to_string_pretty(&articles).unwrap_or_default()
+                            }
+                            Err(e) => format!("Error parsing: {e}"),
+                        },
                         Err(e) => format!("Error: {e}"),
                     },
                     Err(e) => format!("Error: {e}"),
@@ -173,6 +159,19 @@ impl NewsServer {
             }
             None => "NewsAPI not configured. Set NEWSAPI_KEY environment variable. Use search_news for free GDELT access.".into(),
         }
+    }
+}
+
+async fn fetch_gdelt_raw(client: &Client, url: &str) -> String {
+    match client.get(url).send().await {
+        Ok(resp) => match resp.text().await {
+            Ok(text) => match serde_json::from_str::<Value>(&text) {
+                Ok(data) => serde_json::to_string_pretty(&data).unwrap_or_default(),
+                Err(_) => text,
+            },
+            Err(e) => format!("Error: {e}"),
+        },
+        Err(e) => format!("Error: {e}"),
     }
 }
 
