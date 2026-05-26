@@ -12,7 +12,7 @@ pub struct SearchInput {
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct CountryNewsInput {
-    /// Country name or code (e.g. "Kenya", "United States")
+    /// Country name or code
     pub country: String,
     /// Optional topic filter
     pub topic: Option<String>,
@@ -30,8 +30,6 @@ pub struct TrendingInput {
 pub struct TimelineInput {
     /// Search query
     pub query: String,
-    /// Resolution: day, week, month (default day)
-    pub resolution: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -40,8 +38,22 @@ pub struct NewsApiInput {
     pub query: String,
     /// Max results (default 5)
     pub limit: Option<u32>,
-    /// Sort by: relevancy, popularity, publishedAt
-    pub sort_by: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct RssFeedInput {
+    /// Region: global, china, india, australia, europe, middle-east, france, germany, uk
+    pub region: String,
+    /// Max articles (default 10)
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct MultiRegionInput {
+    /// Regions to fetch from
+    pub regions: Vec<String>,
+    /// Max articles per region (default 3)
+    pub limit: Option<u32>,
 }
 
 #[derive(Clone)]
@@ -52,18 +64,18 @@ pub struct NewsServer {
 
 #[tool_router(server_handler)]
 impl NewsServer {
-    #[tool(description = "Search global news articles by keyword, topic, or entity (free, via GDELT)")]
+    #[tool(description = "Search global news articles by keyword (free, via GDELT)")]
     async fn search_news(&self, Parameters(input): Parameters<SearchInput>) -> String {
         let limit = input.limit.unwrap_or(10);
         let url = format!(
             "https://api.gdeltproject.org/api/v2/doc/doc?query={}&mode=artlist&maxrecords={}&format=json&sort=datedesc",
             input.query.replace(' ', "+"), limit
         );
-        match self.client.get(&url).send().await.and_then(|r| Ok(r)) {
+        match self.client.get(&url).send().await {
             Ok(resp) => match resp.text().await {
                 Ok(text) => match serde_json::from_str::<Value>(&text) {
                     Ok(data) => format_articles(&data),
-                    Err(e) => format!("Error parsing: {e}"),
+                    Err(_) => text,
                 },
                 Err(e) => format!("Error: {e}"),
             },
@@ -71,14 +83,12 @@ impl NewsServer {
         }
     }
 
-    #[tool(description = "Get latest news for a specific country")]
+    #[tool(description = "Get latest news for a specific country (free, via GDELT)")]
     async fn get_country_news(&self, Parameters(input): Parameters<CountryNewsInput>) -> String {
         let limit = input.limit.unwrap_or(10);
-        let topic = input.topic.as_deref().unwrap_or("");
-        let query = if topic.is_empty() {
-            input.country.clone()
-        } else {
-            format!("{} {}", input.country, topic)
+        let query = match &input.topic {
+            Some(t) => format!("{} {}", input.country, t),
+            None => input.country.clone(),
         };
         let url = format!(
             "https://api.gdeltproject.org/api/v2/doc/doc?query={}&mode=artlist&maxrecords={}&format=json&sort=datedesc",
@@ -88,7 +98,7 @@ impl NewsServer {
             Ok(resp) => match resp.text().await {
                 Ok(text) => match serde_json::from_str::<Value>(&text) {
                     Ok(data) => format_articles(&data),
-                    Err(e) => format!("Error parsing: {e}"),
+                    Err(_) => text,
                 },
                 Err(e) => format!("Error: {e}"),
             },
@@ -96,7 +106,7 @@ impl NewsServer {
         }
     }
 
-    #[tool(description = "Get trending news themes and topics globally or by country (via GDELT)")]
+    #[tool(description = "Get trending news tone/themes globally or by country (via GDELT)")]
     async fn get_trending_topics(&self, Parameters(input): Parameters<TrendingInput>) -> String {
         let query = input.country.as_deref().unwrap_or("world");
         let url = format!(
@@ -106,12 +116,11 @@ impl NewsServer {
         fetch_gdelt_raw(&self.client, &url).await
     }
 
-    #[tool(description = "Get news volume timeline for a topic (how much coverage over time)")]
+    #[tool(description = "Get news volume timeline for a topic (via GDELT)")]
     async fn get_news_timeline(&self, Parameters(input): Parameters<TimelineInput>) -> String {
-        let res = input.resolution.as_deref().unwrap_or("day");
         let url = format!(
-            "https://api.gdeltproject.org/api/v2/doc/doc?query={}&mode=timelinevol&format=json&TIMERES={}",
-            input.query.replace(' ', "+"), res
+            "https://api.gdeltproject.org/api/v2/doc/doc?query={}&mode=timelinevol&format=json",
+            input.query.replace(' ', "+")
         );
         fetch_gdelt_raw(&self.client, &url).await
     }
@@ -125,42 +134,62 @@ impl NewsServer {
         fetch_gdelt_raw(&self.client, &url).await
     }
 
-    #[tool(description = "Search news via NewsAPI (requires NEWSAPI_KEY, broader sources)")]
+    #[tool(description = "Search news via NewsAPI (requires NEWSAPI_KEY env var)")]
     async fn newsapi_search(&self, Parameters(input): Parameters<NewsApiInput>) -> String {
         match &self.newsapi_key {
             Some(key) => {
                 let limit = input.limit.unwrap_or(5);
-                let sort = input.sort_by.as_deref().unwrap_or("publishedAt");
                 let url = format!(
-                    "https://newsapi.org/v2/everything?q={}&pageSize={}&sortBy={}&apiKey={}",
-                    input.query.replace(' ', "+"), limit, sort, key
+                    "https://newsapi.org/v2/everything?q={}&pageSize={}&sortBy=publishedAt&apiKey={}",
+                    input.query.replace(' ', "+"), limit, key
                 );
-                match self.client.get(&url).send().await {
-                    Ok(resp) => match resp.text().await {
-                        Ok(text) => match serde_json::from_str::<Value>(&text) {
-                            Ok(data) => {
-                                let articles = data["articles"].as_array().unwrap_or(&vec![]).iter().map(|a| {
-                                    serde_json::json!({
-                                        "title": a["title"],
-                                        "source": a["source"]["name"],
-                                        "url": a["url"],
-                                        "published_at": a["publishedAt"],
-                                        "description": a["description"]
-                                    })
-                                }).collect::<Vec<_>>();
-                                serde_json::to_string_pretty(&articles).unwrap_or_default()
-                            }
-                            Err(e) => format!("Error parsing: {e}"),
-                        },
-                        Err(e) => format!("Error: {e}"),
-                    },
-                    Err(e) => format!("Error: {e}"),
-                }
+                fetch_gdelt_raw(&self.client, &url).await
             }
-            None => "NewsAPI not configured. Set NEWSAPI_KEY environment variable. Use search_news for free GDELT access.".into(),
+            None => "NewsAPI not configured. Set NEWSAPI_KEY. Use search_news for free GDELT access.".into(),
         }
     }
+
+    #[tool(description = "Get news from a specific region via RSS (free, no key). Regions: global, china, india, australia, europe, middle-east, france, germany, uk")]
+    async fn get_regional_news(&self, Parameters(input): Parameters<RssFeedInput>) -> String {
+        let limit = input.limit.unwrap_or(10) as usize;
+        let urls = get_rss_urls(&input.region);
+        if urls.is_empty() {
+            return format!("Unknown region '{}'. Available: global, china, india, australia, europe, middle-east, france, germany, uk", input.region);
+        }
+        let mut all_articles = Vec::new();
+        for url in urls {
+            if let Ok(resp) = self.client.get(url).send().await {
+                if let Ok(text) = resp.text().await {
+                    all_articles.extend(parse_rss_items(&text, limit));
+                }
+            }
+        }
+        all_articles.truncate(limit);
+        serde_json::to_string_pretty(&all_articles).unwrap_or_default()
+    }
+
+    #[tool(description = "Get news from multiple regions at once via RSS (free: BBC, CGTN, NDTV, ABC AU, DW, France24, Al Jazeera)")]
+    async fn get_multi_region_news(&self, Parameters(input): Parameters<MultiRegionInput>) -> String {
+        let limit = input.limit.unwrap_or(3) as usize;
+        let mut result = serde_json::Map::new();
+        for region in &input.regions {
+            let urls = get_rss_urls(region);
+            let mut articles = Vec::new();
+            for url in urls {
+                if let Ok(resp) = self.client.get(url).send().await {
+                    if let Ok(text) = resp.text().await {
+                        articles.extend(parse_rss_items(&text, limit));
+                    }
+                }
+            }
+            articles.truncate(limit);
+            result.insert(region.clone(), serde_json::json!(articles));
+        }
+        serde_json::to_string_pretty(&serde_json::Value::Object(result)).unwrap_or_default()
+    }
 }
+
+// --- Helper functions ---
 
 async fn fetch_gdelt_raw(client: &Client, url: &str) -> String {
     match client.get(url).send().await {
@@ -187,4 +216,76 @@ fn format_articles(data: &Value) -> String {
         })
     }).collect::<Vec<_>>();
     serde_json::to_string_pretty(&articles).unwrap_or_default()
+}
+
+fn get_rss_urls(region: &str) -> Vec<&'static str> {
+    match region.to_lowercase().as_str() {
+        "global" | "world" => vec!["https://feeds.bbci.co.uk/news/world/rss.xml"],
+        "china" => vec!["https://www.cgtn.com/subscribe/rss/section/world.xml"],
+        "india" => vec!["https://feeds.feedburner.com/ndtvnews-top-stories"],
+        "australia" | "au" => vec!["https://www.abc.net.au/news/feed/2942460/rss.xml"],
+        "europe" | "eu" => vec!["https://rss.dw.com/rdf/rss-en-all"],
+        "france" | "fr" => vec!["https://www.france24.com/en/rss"],
+        "germany" | "de" => vec!["https://rss.dw.com/rdf/rss-en-all"],
+        "middle-east" | "mideast" => vec!["https://www.aljazeera.com/xml/rss/all.xml"],
+        "africa" => vec!["https://www.aljazeera.com/xml/rss/all.xml"],
+        "uk" => vec!["https://feeds.bbci.co.uk/news/rss.xml"],
+        _ => vec![],
+    }
+}
+
+fn parse_rss_items(xml: &str, limit: usize) -> Vec<serde_json::Value> {
+    let mut items = Vec::new();
+    let mut rest = xml;
+    while let Some(start) = rest.find("<item") {
+        let end = match rest[start..].find("</item>") {
+            Some(i) => start + i + 7,
+            None => break,
+        };
+        let item_xml = &rest[start..end];
+        let title = extract_tag(item_xml, "title").unwrap_or_default();
+        let link = extract_tag(item_xml, "link").unwrap_or_default();
+        let pub_date = extract_tag(item_xml, "pubDate").unwrap_or_default();
+        let description = extract_tag(item_xml, "description")
+            .map(|d| d.chars().take(200).collect::<String>())
+            .unwrap_or_default();
+        if !title.is_empty() {
+            items.push(serde_json::json!({
+                "title": title,
+                "url": link,
+                "date": pub_date,
+                "description": strip_html(&description)
+            }));
+        }
+        if items.len() >= limit { break; }
+        rest = &rest[end..];
+    }
+    items
+}
+
+fn extract_tag(xml: &str, tag: &str) -> Option<String> {
+    let open = format!("<{}", tag);
+    let close = format!("</{}>", tag);
+    let start = xml.find(&open)?;
+    let content_start = xml[start..].find('>')? + start + 1;
+    let content = &xml[content_start..];
+    let end = content.find(&close)?;
+    let raw = &content[..end];
+    let text = if raw.starts_with("<![CDATA[") {
+        raw.trim_start_matches("<![CDATA[").trim_end_matches("]]>")
+    } else {
+        raw
+    };
+    Some(text.trim().to_string())
+}
+
+fn strip_html(s: &str) -> String {
+    let mut result = String::new();
+    let mut in_tag = false;
+    for c in s.chars() {
+        if c == '<' { in_tag = true; }
+        else if c == '>' { in_tag = false; }
+        else if !in_tag { result.push(c); }
+    }
+    result.trim().to_string()
 }
