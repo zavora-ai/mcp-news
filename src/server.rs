@@ -56,6 +56,22 @@ pub struct MultiRegionInput {
     pub limit: Option<u32>,
 }
 
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct HnInput {
+    /// Type: top, new, best, ask, show, job
+    pub story_type: Option<String>,
+    /// Max stories (default 10)
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct HnSearchInput {
+    /// Search query
+    pub query: String,
+    /// Max results (default 10)
+    pub limit: Option<u32>,
+}
+
 #[derive(Clone)]
 pub struct NewsServer {
     pub client: Client,
@@ -255,6 +271,72 @@ impl NewsServer {
                 }
             }
             None => "GNews not configured. Set GNEWS_API_KEY environment variable.".into(),
+        }
+    }
+
+    #[tool(description = "Get Hacker News top/new/best stories (free, no key). Types: top, new, best, ask, show, job")]
+    async fn hn_stories(&self, Parameters(input): Parameters<HnInput>) -> String {
+        let story_type = input.story_type.as_deref().unwrap_or("top");
+        let limit = input.limit.unwrap_or(10) as usize;
+        let endpoint = match story_type {
+            "new" => "newstories",
+            "best" => "beststories",
+            "ask" => "askstories",
+            "show" => "showstories",
+            "job" => "jobstories",
+            _ => "topstories",
+        };
+        let url = format!("https://hacker-news.firebaseio.com/v0/{}.json", endpoint);
+        let ids: Vec<u64> = match self.client.get(&url).send().await {
+            Ok(resp) => resp.json().await.unwrap_or_default(),
+            Err(e) => return format!("Error: {e}"),
+        };
+        let mut stories = Vec::new();
+        for id in ids.iter().take(limit) {
+            let item_url = format!("https://hacker-news.firebaseio.com/v0/item/{}.json", id);
+            if let Ok(resp) = self.client.get(&item_url).send().await {
+                if let Ok(item) = resp.json::<Value>().await {
+                    stories.push(serde_json::json!({
+                        "title": item["title"],
+                        "url": item["url"],
+                        "score": item["score"],
+                        "comments": item["descendants"],
+                        "by": item["by"],
+                        "id": id,
+                        "hn_url": format!("https://news.ycombinator.com/item?id={}", id)
+                    }));
+                }
+            }
+        }
+        serde_json::to_string_pretty(&stories).unwrap_or_default()
+    }
+
+    #[tool(description = "Search Hacker News articles by keyword (free, via Algolia HN Search API)")]
+    async fn hn_search(&self, Parameters(input): Parameters<HnSearchInput>) -> String {
+        let limit = input.limit.unwrap_or(10);
+        let url = format!(
+            "https://hn.algolia.com/api/v1/search?query={}&tags=story&hitsPerPage={}",
+            input.query.replace(' ', "+"), limit
+        );
+        match self.client.get(&url).send().await {
+            Ok(resp) => match resp.json::<Value>().await {
+                Ok(data) => {
+                    let hits = data["hits"].as_array().unwrap_or(&vec![]).iter().map(|h| {
+                        serde_json::json!({
+                            "title": h["title"],
+                            "url": h["url"],
+                            "score": h["points"],
+                            "comments": h["num_comments"],
+                            "by": h["author"],
+                            "date": h["created_at"],
+                            "hn_url": format!("https://news.ycombinator.com/item?id={}", h["objectID"].as_str().unwrap_or(""))
+                        })
+                    }).collect::<Vec<_>>();
+                    serde_json::to_string_pretty(&hits).unwrap_or_default()
+                }
+                Err(e) => format!("Error: {e}"),
+            },
+            Err(e) => format!("Error: {e}"),
         }
     }
 }
