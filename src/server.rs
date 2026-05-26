@@ -144,9 +144,29 @@ impl NewsServer {
                     "https://newsapi.org/v2/everything?q={}&pageSize={}&sortBy=publishedAt&apiKey={}",
                     input.query.replace(' ', "+"), limit, key
                 );
-                fetch_gdelt_raw(&self.client, &url).await
+                match self.client.get(&url).send().await {
+                    Ok(resp) => match resp.text().await {
+                        Ok(text) => match serde_json::from_str::<Value>(&text) {
+                            Ok(data) => {
+                                let articles = data["articles"].as_array().unwrap_or(&vec![]).iter().map(|a| {
+                                    serde_json::json!({
+                                        "title": a["title"],
+                                        "source": a["source"]["name"],
+                                        "url": a["url"],
+                                        "date": a["publishedAt"],
+                                        "description": a["description"]
+                                    })
+                                }).collect::<Vec<_>>();
+                                serde_json::to_string_pretty(&articles).unwrap_or_default()
+                            }
+                            Err(_) => text,
+                        },
+                        Err(e) => format!("Error: {e}"),
+                    },
+                    Err(e) => format!("Error: {e}"),
+                }
             }
-            None => "NewsAPI not configured. Set NEWSAPI_KEY. Use search_news for free GDELT access.".into(),
+            None => "NewsAPI not configured. Set NEWSAPI_KEY env var.".into(),
         }
     }
 
