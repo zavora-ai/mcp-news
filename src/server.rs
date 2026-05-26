@@ -72,6 +72,20 @@ pub struct HnSearchInput {
     pub limit: Option<u32>,
 }
 
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct TickerInput {
+    /// Stock/crypto ticker symbol (e.g. AAPL, MSFT, BTC-USD, ETH-USD)
+    pub symbol: String,
+    /// Range: 1d, 5d, 1mo, 3mo, 6mo, 1y, 5y (default 5d)
+    pub range: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct CryptoInput {
+    /// Coin IDs comma-separated (e.g. "bitcoin,ethereum,solana")
+    pub coins: String,
+}
+
 #[derive(Clone)]
 pub struct NewsServer {
     pub client: Client,
@@ -333,6 +347,82 @@ impl NewsServer {
                         })
                     }).collect::<Vec<_>>();
                     serde_json::to_string_pretty(&hits).unwrap_or_default()
+                }
+                Err(e) => format!("Error: {e}"),
+            },
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(description = "Get stock/crypto price chart from Yahoo Finance (free, no key). Symbols: AAPL, MSFT, GOOGL, BTC-USD, ETH-USD")]
+    async fn yfinance_chart(&self, Parameters(input): Parameters<TickerInput>) -> String {
+        let range = input.range.as_deref().unwrap_or("5d");
+        let url = format!(
+            "https://query2.finance.yahoo.com/v8/finance/chart/{}?interval=1d&range={}",
+            input.symbol, range
+        );
+        match self.client.get(&url).header("User-Agent", "mcp-news/1.0").send().await {
+            Ok(resp) => match resp.json::<Value>().await {
+                Ok(data) => {
+                    let result = &data["chart"]["result"][0];
+                    let meta = &result["meta"];
+                    let timestamps = result["timestamp"].as_array();
+                    let closes = result["indicators"]["quote"][0]["close"].as_array();
+                    let mut chart_data = serde_json::json!({
+                        "symbol": meta["symbol"],
+                        "price": meta["regularMarketPrice"],
+                        "previous_close": meta["chartPreviousClose"],
+                        "currency": meta["currency"],
+                        "exchange": meta["exchangeName"],
+                        "range": range
+                    });
+                    if let (Some(ts), Some(cl)) = (timestamps, closes) {
+                        let points: Vec<Value> = ts.iter().zip(cl.iter()).map(|(t, c)| {
+                            serde_json::json!({"timestamp": t, "close": c})
+                        }).collect();
+                        chart_data["data_points"] = serde_json::json!(points.len());
+                        chart_data["prices"] = serde_json::json!(points);
+                    }
+                    serde_json::to_string_pretty(&chart_data).unwrap_or_default()
+                }
+                Err(e) => format!("Error: {e}"),
+            },
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(description = "Get crypto prices and 24h changes from CoinGecko (free, no key). Coins: bitcoin, ethereum, solana, cardano, etc.")]
+    async fn crypto_prices(&self, Parameters(input): Parameters<CryptoInput>) -> String {
+        let url = format!(
+            "https://api.coingecko.com/api/v3/simple/price?ids={}&vs_currencies=usd&include_24hr_change=true&include_market_cap=true&include_24hr_vol=true",
+            input.coins
+        );
+        match self.client.get(&url).header("User-Agent", "mcp-news/1.0").send().await {
+            Ok(resp) => match resp.json::<Value>().await {
+                Ok(data) => serde_json::to_string_pretty(&data).unwrap_or_default(),
+                Err(e) => format!("Error: {e}"),
+            },
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(description = "Get trending cryptocurrencies from CoinGecko (free, no key)")]
+    async fn crypto_trending(&self, Parameters(_input): Parameters<SearchInput>) -> String {
+        let url = "https://api.coingecko.com/api/v3/search/trending";
+        match self.client.get(url).header("User-Agent", "mcp-news/1.0").send().await {
+            Ok(resp) => match resp.json::<Value>().await {
+                Ok(data) => {
+                    let coins = data["coins"].as_array().unwrap_or(&vec![]).iter().map(|c| {
+                        let item = &c["item"];
+                        serde_json::json!({
+                            "name": item["name"],
+                            "symbol": item["symbol"],
+                            "market_cap_rank": item["market_cap_rank"],
+                            "price_btc": item["price_btc"],
+                            "score": item["score"]
+                        })
+                    }).collect::<Vec<_>>();
+                    serde_json::to_string_pretty(&coins).unwrap_or_default()
                 }
                 Err(e) => format!("Error: {e}"),
             },
