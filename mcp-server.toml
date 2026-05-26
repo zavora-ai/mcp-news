@@ -1,0 +1,53 @@
+server_id = "mcp_news"
+display_name = "News"
+version = "1.0.0"
+domain = "news"
+sdk_version = "0.1.0"
+risk_level = "low"
+writes_allowed = "none"
+transports = ["stdio"]
+credentials = ["vault://newsapi-key"]
+governance_gates = []
+environments = ["development", "staging", "production"]
+
+[[tools]]
+name = "search_news"
+description = "Search global news articles by keyword, topic, or entity (free, via GDELT)"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "get_country_news"
+description = "Get latest news for a specific country"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "get_trending_topics"
+description = "Get trending news themes and topics globally or by country"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "get_news_timeline"
+description = "Get news volume timeline for a topic"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "get_news_sentiment"
+description = "Get tone/sentiment analysis for news about a topic"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "newsapi_search"
+description = "Search news via NewsAPI (requires NEWSAPI_KEY)"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = ["vault://newsapi-key"]
