@@ -60,6 +60,7 @@ pub struct MultiRegionInput {
 pub struct NewsServer {
     pub client: Client,
     pub newsapi_key: Option<String>,
+    pub gnews_key: Option<String>,
 }
 
 #[tool_router(server_handler)]
@@ -187,6 +188,55 @@ impl NewsServer {
         }
         serde_json::to_string_pretty(&serde_json::Value::Object(result)).unwrap_or_default()
     }
+
+    #[tool(description = "Search news via GNews (high-quality sources, 100 req/day free). Requires GNEWS_API_KEY env var")]
+    async fn gnews_search(&self, Parameters(input): Parameters<SearchInput>) -> String {
+        match &self.gnews_key {
+            Some(key) => {
+                let limit = input.limit.unwrap_or(5);
+                let url = format!(
+                    "https://gnews.io/api/v4/search?q={}&lang=en&max={}&apikey={}",
+                    input.query.replace(' ', "+"), limit, key
+                );
+                match self.client.get(&url).send().await {
+                    Ok(resp) => match resp.text().await {
+                        Ok(text) => match serde_json::from_str::<Value>(&text) {
+                            Ok(data) => format_gnews(&data),
+                            Err(_) => text,
+                        },
+                        Err(e) => format!("Error: {e}"),
+                    },
+                    Err(e) => format!("Error: {e}"),
+                }
+            }
+            None => "GNews not configured. Set GNEWS_API_KEY environment variable.".into(),
+        }
+    }
+
+    #[tool(description = "Get top headlines by country via GNews (country codes: us, gb, ke, in, au, cn, fr, de, ng, za, ae)")]
+    async fn gnews_top_headlines(&self, Parameters(input): Parameters<CountryNewsInput>) -> String {
+        match &self.gnews_key {
+            Some(key) => {
+                let limit = input.limit.unwrap_or(5);
+                let country_code = country_to_gnews_code(&input.country);
+                let url = format!(
+                    "https://gnews.io/api/v4/top-headlines?country={}&max={}&apikey={}",
+                    country_code, limit, key
+                );
+                match self.client.get(&url).send().await {
+                    Ok(resp) => match resp.text().await {
+                        Ok(text) => match serde_json::from_str::<Value>(&text) {
+                            Ok(data) => format_gnews(&data),
+                            Err(_) => text,
+                        },
+                        Err(e) => format!("Error: {e}"),
+                    },
+                    Err(e) => format!("Error: {e}"),
+                }
+            }
+            None => "GNews not configured. Set GNEWS_API_KEY environment variable.".into(),
+        }
+    }
 }
 
 // --- Helper functions ---
@@ -288,4 +338,38 @@ fn strip_html(s: &str) -> String {
         else if !in_tag { result.push(c); }
     }
     result.trim().to_string()
+}
+
+fn format_gnews(data: &Value) -> String {
+    let articles = data["articles"].as_array().unwrap_or(&vec![]).iter().map(|a| {
+        serde_json::json!({
+            "title": a["title"],
+            "url": a["url"],
+            "source": a["source"]["name"],
+            "date": a["publishedAt"],
+            "description": a["description"],
+            "image": a["image"]
+        })
+    }).collect::<Vec<_>>();
+    serde_json::to_string_pretty(&articles).unwrap_or_default()
+}
+
+fn country_to_gnews_code(country: &str) -> String {
+    match country.to_lowercase().as_str() {
+        "kenya" | "ke" => "ke",
+        "nigeria" | "ng" => "ng",
+        "south africa" | "za" => "za",
+        "india" | "in" => "in",
+        "china" | "cn" => "cn",
+        "australia" | "au" => "au",
+        "united kingdom" | "uk" | "gb" => "gb",
+        "united states" | "us" | "usa" => "us",
+        "france" | "fr" => "fr",
+        "germany" | "de" => "de",
+        "uae" | "ae" => "ae",
+        "japan" | "jp" => "jp",
+        "brazil" | "br" => "br",
+        "egypt" | "eg" => "eg",
+        other => other,
+    }.to_string()
 }
