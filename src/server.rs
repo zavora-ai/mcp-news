@@ -86,6 +86,35 @@ pub struct CryptoInput {
     pub coins: String,
 }
 
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ArxivInput {
+    /// Search query (e.g. "large language model", "transformer")
+    pub query: String,
+    /// Category filter: cs.AI, cs.CL, cs.LG, cs.CV, stat.ML (optional)
+    pub category: Option<String>,
+    /// Max results (default 5)
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct CveInput {
+    /// Keyword search (e.g. "remote code execution", "apache")
+    pub query: String,
+    /// Max results (default 5)
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SportInput {
+    /// Sport: football, cricket, tennis, formula1, golf (default: all)
+    pub sport: Option<String>,
+    /// Max articles (default 10)
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct EmptyInput {}
+
 #[derive(Clone)]
 pub struct NewsServer {
     pub client: Client,
@@ -429,6 +458,130 @@ impl NewsServer {
             Err(e) => format!("Error: {e}"),
         }
     }
+
+    #[tool(description = "Search ArXiv for scientific papers (AI, ML, NLP, CV, physics, math). Free, no key")]
+    async fn arxiv_search(&self, Parameters(input): Parameters<ArxivInput>) -> String {
+        let limit = input.limit.unwrap_or(5);
+        let query = match &input.category {
+            Some(cat) => format!("cat:{}+AND+all:{}", cat, input.query.replace(' ', "+")),
+            None => format!("all:{}", input.query.replace(' ', "+")),
+        };
+        let url = format!(
+            "https://export.arxiv.org/api/query?search_query={}&max_results={}&sortBy=submittedDate&sortOrder=descending",
+            query, limit
+        );
+        match self.client.get(&url).send().await {
+            Ok(resp) => match resp.text().await {
+                Ok(xml) => parse_arxiv(&xml),
+                Err(e) => format!("Error: {e}"),
+            },
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(description = "Search CVE vulnerabilities from NIST NVD (free, no key). Find security issues by keyword")]
+    async fn cve_search(&self, Parameters(input): Parameters<CveInput>) -> String {
+        let limit = input.limit.unwrap_or(5);
+        let url = format!(
+            "https://services.nvd.nist.gov/rest/json/cves/2.0?resultsPerPage={}&keywordSearch={}",
+            limit, input.query.replace(' ', "+")
+        );
+        match self.client.get(&url).send().await {
+            Ok(resp) => match resp.json::<Value>().await {
+                Ok(data) => {
+                    let vulns = data["vulnerabilities"].as_array().unwrap_or(&vec![]).iter().map(|v| {
+                        let cve = &v["cve"];
+                        let metrics = &cve["metrics"];
+                        let score = metrics["cvssMetricV31"].as_array()
+                            .and_then(|a| a.first())
+                            .and_then(|m| m["cvssData"]["baseScore"].as_f64())
+                            .or_else(|| metrics["cvssMetricV2"].as_array()
+                                .and_then(|a| a.first())
+                                .and_then(|m| m["cvssData"]["baseScore"].as_f64()));
+                        serde_json::json!({
+                            "id": cve["id"],
+                            "description": cve["descriptions"][0]["value"],
+                            "severity": score,
+                            "published": cve["published"],
+                            "modified": cve["lastModified"]
+                        })
+                    }).collect::<Vec<_>>();
+                    serde_json::to_string_pretty(&vulns).unwrap_or_default()
+                }
+                Err(e) => format!("Error: {e}"),
+            },
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(description = "Get CISA Known Exploited Vulnerabilities (actively exploited in the wild). Free, no key")]
+    async fn cisa_exploited_vulns(&self, Parameters(_input): Parameters<EmptyInput>) -> String {
+        let url = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json";
+        match self.client.get(url).send().await {
+            Ok(resp) => match resp.json::<Value>().await {
+                Ok(data) => {
+                    let vulns = data["vulnerabilities"].as_array().cloned().unwrap_or_default();
+                    let recent: Vec<Value> = vulns.iter().rev().take(10).map(|v| {
+                        serde_json::json!({
+                            "cve_id": v["cveID"],
+                            "vendor": v["vendorProject"],
+                            "product": v["product"],
+                            "name": v["vulnerabilityName"],
+                            "date_added": v["dateAdded"],
+                            "due_date": v["dueDate"],
+                            "action": v["requiredAction"]
+                        })
+                    }).collect();
+                    serde_json::to_string_pretty(&recent).unwrap_or_default()
+                }
+                Err(e) => format!("Error: {e}"),
+            },
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(description = "Get latest sports news from BBC Sport (free RSS). Sports: football, cricket, tennis, formula1, golf")]
+    async fn sports_news(&self, Parameters(input): Parameters<SportInput>) -> String {
+        let limit = input.limit.unwrap_or(10) as usize;
+        let feed = match input.sport.as_deref() {
+            Some("football") | Some("soccer") => "https://feeds.bbci.co.uk/sport/football/rss.xml",
+            Some("cricket") => "https://feeds.bbci.co.uk/sport/cricket/rss.xml",
+            Some("tennis") => "https://feeds.bbci.co.uk/sport/tennis/rss.xml",
+            Some("formula1") | Some("f1") => "https://feeds.bbci.co.uk/sport/formula1/rss.xml",
+            Some("golf") => "https://feeds.bbci.co.uk/sport/golf/rss.xml",
+            _ => "https://feeds.bbci.co.uk/sport/rss.xml",
+        };
+        match self.client.get(feed).send().await {
+            Ok(resp) => match resp.text().await {
+                Ok(xml) => serde_json::to_string_pretty(&parse_rss_items(&xml, limit)).unwrap_or_default(),
+                Err(e) => format!("Error: {e}"),
+            },
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(description = "Get active natural events from NASA EONET (wildfires, storms, volcanoes, earthquakes). Free, no key")]
+    async fn nasa_events(&self, Parameters(_input): Parameters<EmptyInput>) -> String {
+        let url = "https://eonet.gsfc.nasa.gov/api/v3/events?limit=10&status=open";
+        match self.client.get(url).send().await {
+            Ok(resp) => match resp.json::<Value>().await {
+                Ok(data) => {
+                    let events = data["events"].as_array().unwrap_or(&vec![]).iter().map(|e| {
+                        serde_json::json!({
+                            "title": e["title"],
+                            "category": e["categories"][0]["title"],
+                            "date": e["geometry"].as_array().and_then(|a| a.last()).and_then(|g| g["date"].as_str()),
+                            "coordinates": e["geometry"].as_array().and_then(|a| a.last()).and_then(|g| g["coordinates"].as_array()),
+                            "source": e["sources"][0]["url"]
+                        })
+                    }).collect::<Vec<_>>();
+                    serde_json::to_string_pretty(&events).unwrap_or_default()
+                }
+                Err(e) => format!("Error: {e}"),
+            },
+            Err(e) => format!("Error: {e}"),
+        }
+    }
 }
 
 // --- Helper functions ---
@@ -564,4 +717,33 @@ fn country_to_gnews_code(country: &str) -> String {
         "egypt" | "eg" => "eg",
         other => other,
     }.to_string()
+}
+
+fn parse_arxiv(xml: &str) -> String {
+    let mut papers = Vec::new();
+    let mut rest = xml;
+    while let Some(start) = rest.find("<entry>") {
+        let end = match rest[start..].find("</entry>") {
+            Some(i) => start + i + 8,
+            None => break,
+        };
+        let entry = &rest[start..end];
+        let title = extract_tag(entry, "title").unwrap_or_default().replace('\n', " ");
+        let id = extract_tag(entry, "id").unwrap_or_default();
+        let summary = extract_tag(entry, "summary").unwrap_or_default().replace('\n', " ");
+        let published = extract_tag(entry, "published").unwrap_or_default();
+        if !title.is_empty() {
+            papers.push(serde_json::json!({
+                "title": title.trim(),
+                "url": id,
+                "abstract": summary.trim().chars().take(300).collect::<String>(),
+                "published": published
+            }));
+        }
+        rest = &rest[end..];
+    }
+    if papers.is_empty() && xml.contains("Rate exceeded") {
+        return "ArXiv rate limited. Please wait 3 seconds between requests.".into();
+    }
+    serde_json::to_string_pretty(&papers).unwrap_or_default()
 }
