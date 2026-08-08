@@ -187,3 +187,7 @@ SOL: $...
 ## License
 
 Apache-2.0
+
+## rmcp and MCP compatibility
+
+This server is built with [`rmcp` 3.1.2](https://github.com/modelcontextprotocol/rust-sdk/releases/tag/rmcp-v3.1.2) and requires Rust 1.88 or newer. The rmcp 3 rollout retains legacy MCP initialization compatibility and targets MCP protocol revisions `2025-11-25` and `2026-07-28`.
