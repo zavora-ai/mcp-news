@@ -1,8 +1,8 @@
 server_id = "mcp_news"
 display_name = "News"
-version = "1.5.1"
+version = "1.6.0"
 domain = "news"
-sdk_version = "0.1.0"
+sdk_version = "0.2.0"
 risk_level = "low"
 writes_allowed = "none"
 transports = ["stdio"]
@@ -12,42 +12,140 @@ environments = ["development", "staging", "production"]
 
 [[tools]]
 name = "search_news"
-description = "Search global news articles by keyword, topic, or entity (free, via GDELT)"
+description = "Search global news articles by keyword (free, via GDELT)"
 risk_class = "read_only"
 requires_approval = false
 credential_bindings = []
 
 [[tools]]
 name = "get_country_news"
-description = "Get latest news for a specific country"
+description = "Get latest news for a specific country (free, via GDELT)"
 risk_class = "read_only"
 requires_approval = false
 credential_bindings = []
 
 [[tools]]
 name = "get_trending_topics"
-description = "Get trending news themes and topics globally or by country"
+description = "Get trending news tone/themes globally or by country (via GDELT)"
 risk_class = "read_only"
 requires_approval = false
 credential_bindings = []
 
 [[tools]]
 name = "get_news_timeline"
-description = "Get news volume timeline for a topic"
+description = "Get news volume timeline for a topic (via GDELT)"
 risk_class = "read_only"
 requires_approval = false
 credential_bindings = []
 
 [[tools]]
 name = "get_news_sentiment"
-description = "Get tone/sentiment analysis for news about a topic"
+description = "Get tone/sentiment analysis for news about a topic (via GDELT)"
 risk_class = "read_only"
 requires_approval = false
 credential_bindings = []
 
 [[tools]]
 name = "newsapi_search"
-description = "Search news via NewsAPI (requires NEWSAPI_KEY)"
+description = "Search news via NewsAPI (requires NEWSAPI_KEY env var)"
 risk_class = "read_only"
 requires_approval = false
 credential_bindings = ["vault://newsapi-key"]
+
+[[tools]]
+name = "get_regional_news"
+description = "Get news from a specific region via RSS (free, no key). Regions: global, china, india, australia, europe, middle-east, france, germany, uk"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "get_multi_region_news"
+description = "Get news from multiple regions at once via RSS (free: BBC, CGTN, NDTV, ABC AU, DW, France24, Al Jazeera)"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "gnews_search"
+description = "Search news via GNews (high-quality sources, 100 req/day free). Requires GNEWS_API_KEY env var"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "gnews_top_headlines"
+description = "Get top headlines by country via GNews (country codes: us, gb, ke, in, au, cn, fr, de, ng, za, ae)"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "hn_stories"
+description = "Get Hacker News top/new/best stories (free, no key). Types: top, new, best, ask, show, job"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "hn_search"
+description = "Search Hacker News articles by keyword (free, via Algolia HN Search API)"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "yfinance_chart"
+description = "Get stock/crypto price chart from Yahoo Finance (free, no key). Symbols: AAPL, MSFT, GOOGL, BTC-USD, ETH-USD"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "crypto_prices"
+description = "Get crypto prices and 24h changes from CoinGecko (free, no key). Coins: bitcoin, ethereum, solana, cardano, etc."
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "crypto_trending"
+description = "Get trending cryptocurrencies from CoinGecko (free, no key)"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "arxiv_search"
+description = "Search ArXiv for scientific papers (AI, ML, NLP, CV, physics, math). Free, no key"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "cve_search"
+description = "Search CVE vulnerabilities from NIST NVD (free, no key). Find security issues by keyword"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "cisa_exploited_vulns"
+description = "Get CISA Known Exploited Vulnerabilities (actively exploited in the wild). Free, no key"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "sports_news"
+description = "Get latest sports news from BBC Sport (free RSS). Sports: football, cricket, tennis, formula1, golf"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []
+
+[[tools]]
+name = "nasa_events"
+description = "Get active natural events from NASA EONET (wildfires, storms, volcanoes, earthquakes). Free, no key"
+risk_class = "read_only"
+requires_approval = false
+credential_bindings = []

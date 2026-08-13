@@ -122,7 +122,7 @@ pub struct NewsServer {
     pub gnews_key: Option<String>,
 }
 
-#[tool_router(server_handler)]
+#[tool_router]
 impl NewsServer {
     #[tool(description = "Search global news articles by keyword (free, via GDELT)")]
     async fn search_news(&self, Parameters(input): Parameters<SearchInput>) -> String {
@@ -746,4 +746,11 @@ fn parse_arxiv(xml: &str) -> String {
         return "ArXiv rate limited. Please wait 3 seconds between requests.".into();
     }
     serde_json::to_string_pretty(&papers).unwrap_or_default()
+}
+
+adk_mcp_sdk::mcp_2026_server! {
+    server: NewsServer,
+    task_tools: [],
+    approval_tools: [],
+    cache_ttl_ms: 60_000,
 }
