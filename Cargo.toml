@@ -2,7 +2,7 @@
 
 [package]
 name = "mcp-news"
-version = "1.5.1"
+version = "1.6.0"
 edition = "2024"
 rust-version = "1.94.1"
 description = "Global news intelligence MCP server — real-time articles, trending topics, sentiment via GDELT (free) and NewsAPI"
